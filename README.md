@@ -4,23 +4,28 @@
 [🌐 **Открыть веб-ГИС GISTrees**](https://gistrees.ru/)
 
 > Мобильное приложение + веб-ГИС для съёмки деревьев, офлайн-детекции и последующей аналитики в геопространственной системе.
-
+<p align="center">
+  <a href="https://drive.google.com/file/d/19qOvT1BNHga8mdlgzpWnnBeEq9eRhn9L/view?usp=sharing">
+    <img alt="Download APK" src="https://img.shields.io/badge/Скачать-APK-3DDC84?logo=android&logoColor=white">
+  </a>
+  <a href="https://ВАШ-ДОМЕН-ИЛИ-IP/">
+    <img alt="Open Web GIS" src="https://img.shields.io/badge/Открыть-веб–ГИС-1f6feb?logo=mapbox&logoColor=white">
+  </a>
+</p>
 
 <p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-prototype-yellow">
   <img alt="On-device inference" src="https://img.shields.io/badge/on-device-yes-brightgreen">
   <img alt="NCNN YOLO" src="https://img.shields.io/badge/YOLOv11-NCNN-blue">
 </p>
----
+
 
 ## Состав репозитория
-```text
+---
 gistrees/
 ├─ gistrees-server/   # backend / БД / API веб-ГИС
 ├─ gistrees-web/      # фронтенд веб-ГИС
 └─ README.md          # этот файл
-
-
 ---
 
 ## Что уже работает
