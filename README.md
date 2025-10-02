@@ -15,7 +15,6 @@
 
 <p align="center">
   <img alt="Status" src="https://img.shields.io/badge/status-prototype-yellow">
-  <img alt="On-device inference" src="https://img.shields.io/badge/on-device-yes-brightgreen">
   <img alt="NCNN YOLO" src="https://img.shields.io/badge/YOLOv11-NCNN-blue">
 </p>
 
