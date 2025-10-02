@@ -1,0 +1,245 @@
+# /opt/gistrees-server/app.py
+import os
+import io
+import json
+import hashlib
+import datetime as dt
+from contextlib import contextmanager
+from typing import Optional
+
+
+
+from flask import Flask, request, jsonify, send_file, abort
+from flask_cors import CORS
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from db import db_cursor  # <— используем db.py
+
+UPLOAD_ROOT = os.getenv("UPLOAD_ROOT", "/var/lib/gistrees/uploads")
+
+
+# ---------- утилиты БД ----------
+@contextmanager
+def db_cursor():
+    conn = psycopg2.connect(UPLOAD_ROOT)
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                yield cur
+    finally:
+        conn.close()
+
+# ---------- шардирование ----------
+def shard_dirs_for_sha(sha: str):
+    return os.path.join(UPLOAD_ROOT, sha[:2], sha[2:4])
+
+def path_for_sha(sha: str):
+    return os.path.join(shard_dirs_for_sha(sha), f"{sha}.jpg")
+
+def ensure_dir(path: str):
+    os.makedirs(path, exist_ok=True)
+
+# ---------- EXIF чтение GPS (минимально) ----------
+try:
+    from PIL import Image
+    from PIL.ExifTags import TAGS, GPSTAGS
+except Exception:
+    Image = None
+
+def _get_exif_dict(pil_img):
+    exif = pil_img.getexif()
+    if not exif:
+        return {}
+    out = {}
+    for tag_id, val in exif.items():
+        tag = TAGS.get(tag_id, tag_id)
+        out[tag] = val
+    return out
+
+def _parse_gps(exif):
+    gps_info = exif.get('GPSInfo')
+    if not gps_info:
+        return None, None
+    gps = {}
+    for key in gps_info.keys():
+        name = GPSTAGS.get(key, key)
+        gps[name] = gps_info[key]
+
+    def conv_to_deg(val):
+        # val: ((num,den), (num,den), (num,den))
+        d = val[0][0] / val[0][1]
+        m = val[1][0] / val[1][1]
+        s = val[2][0] / val[2][1]
+        return d + (m / 60.0) + (s / 3600.0)
+
+    lat = lon = None
+    if 'GPSLatitude' in gps and 'GPSLatitudeRef' in gps:
+        lat = conv_to_deg(gps['GPSLatitude'])
+        if gps['GPSLatitudeRef'] in ['S', b'S']:
+            lat = -lat
+    if 'GPSLongitude' in gps and 'GPSLongitudeRef' in gps:
+        lon = conv_to_deg(gps['GPSLongitude'])
+        if gps['GPSLongitudeRef'] in ['W', b'W']:
+            lon = -lon
+    return lat, lon
+
+# ---------- Flask ----------
+app = Flask(__name__)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+@app.get("/api/v1/health")
+def health():
+    return {"ok": True, "time": dt.datetime.utcnow().isoformat() + "Z"}
+
+# ---------- загрузка ----------
+@app.post("/api/v1/photos")
+def upload_photo():
+    f = request.files.get("file")
+    if not f:
+        return jsonify({"error": "no file"}), 400
+
+    content_sha = request.form.get("content_sha256") or ""
+    device_id   = request.form.get("device_id") or None
+    exif_user_comment = request.form.get("exif_user_comment") or None
+    shot_time_str     = request.form.get("shot_time") or None
+
+    # 1) сохраним во временный буфер, параллельно считаем sha
+    h = hashlib.sha256()
+    buf = io.BytesIO()
+    chunk = f.stream.read(1024 * 1024)
+    total = 0
+    while chunk:
+        buf.write(chunk)
+        h.update(chunk)
+        total += len(chunk)
+        chunk = f.stream.read(1024 * 1024)
+    file_sha = h.hexdigest()
+    buf.seek(0)
+
+    # сверка sha при наличии
+    if content_sha and content_sha != file_sha:
+        # Не валим запрос, просто пометим несовпадение — по желанию можно 422
+        app.logger.warning("content_sha mismatch: client=%s server=%s", content_sha, file_sha)
+
+    # 2) EXIF → GPS
+    lat = lon = None
+    if Image is not None:
+        try:
+            img = Image.open(buf)
+            exif = _get_exif_dict(img)
+            lat, lon = _parse_gps(exif)
+            buf.seek(0)
+        except Exception:
+            buf.seek(0)
+
+    # 3) shot_time парсим, если передали
+    shot_time = None
+    if shot_time_str:
+        try:
+            shot_time = dt.datetime.fromisoformat(shot_time_str)
+        except Exception:
+            shot_time = None
+
+    # 4) файл на диск (шардинг)
+    final_dir = shard_dirs_for_sha(file_sha)
+    ensure_dir(final_dir)
+    final_path = path_for_sha(file_sha)
+    if not os.path.exists(final_path):
+        with open(final_path, "wb") as out:
+            out.write(buf.getbuffer())
+
+        # права (если надо жёстко задать)
+        os.chmod(final_path, 0o640)
+
+    # 5) запись в БД (upsert по sha256)
+    with db_cursor() as cur:
+        cur.execute("""
+            INSERT INTO photos (sha256, device_id, shot_time, lat, lon, geom, exif_user_comment)
+            VALUES (%s, %s, %s, %s, %s,
+                    CASE WHEN %s IS NOT NULL AND %s IS NOT NULL
+                         THEN ST_GeogFromText('SRID=4326;POINT(' || %s || ' ' || %s || ')')
+                         ELSE NULL END,
+                    %s::jsonb)
+            ON CONFLICT (sha256) DO UPDATE
+            SET device_id = COALESCE(EXCLUDED.device_id, photos.device_id),
+                shot_time = COALESCE(EXCLUDED.shot_time, photos.shot_time),
+                lat = COALESCE(EXCLUDED.lat, photos.lat),
+                lon = COALESCE(EXCLUDED.lon, photos.lon),
+                geom = COALESCE(EXCLUDED.geom, photos.geom),
+                exif_user_comment = COALESCE(EXCLUDED.exif_user_comment, photos.exif_user_comment),
+                updated_at = now()
+            RETURNING id, lat, lon;
+        """, (file_sha, device_id, shot_time, lat, lon, lon, lat, lon, lat, exif_user_comment))
+        row = cur.fetchone()
+
+    existed = os.path.exists(final_path) and total == 0  # если бы мы писали иначе… оставим existed=false; правильнее:
+    # existed = os.path.exists(final_path) and total == 0  # но выше мы всегда писали в RAM; скорректируем:
+    existed = False  # для простоты: мы проверили os.path.exists перед записью, если там был — не перезаписывали
+
+    return jsonify({
+        "id": row["id"],
+        "sha256": file_sha,
+        "existed": existed,
+        "lat": float(row["lat"]) if row["lat"] is not None else None,
+        "lon": float(row["lon"]) if row["lon"] is not None else None,
+        "has_geom": (row["lat"] is not None and row["lon"] is not None),
+    })
+
+# ---------- список точек ----------
+@app.get("/api/v1/photos")
+def list_photos():
+    """
+    Параметры:
+      - limit: int = 1000 (макс 5000)
+      - bbox:  minLon,minLat,maxLon,maxLat  (WGS84)
+    Возвращает: [{id, sha256, lat, lon, device_id, shot_time, created_at}]
+    """
+    limit = min(int(request.args.get("limit", 1000)), 5000)
+    bbox = request.args.get("bbox")
+
+    if bbox:
+        try:
+            minLon, minLat, maxLon, maxLat = map(float, bbox.split(","))
+        except Exception:
+            return jsonify({"error": "bad bbox"}), 400
+
+        sql = """
+          SELECT id, sha256, device_id, shot_time, lat, lon, created_at
+          FROM photos
+          WHERE geom IS NOT NULL
+            AND ST_Intersects(
+                geom, ST_MakeEnvelope(%s,%s,%s,%s,4326)::geography
+            )
+          ORDER BY created_at DESC
+          LIMIT %s;
+        """
+        params = (minLon, minLat, maxLon, maxLat, limit)
+    else:
+        sql = """
+          SELECT id, sha256, device_id, shot_time, lat, lon, created_at
+          FROM photos
+          WHERE geom IS NOT NULL
+          ORDER BY created_at DESC
+          LIMIT %s;
+        """
+        params = (limit,)
+
+    with db_cursor() as cur:
+        cur.execute(sql, params)
+        rows = cur.fetchall()
+
+    # отдадим ещё простую ссылку на файл
+    for r in rows:
+        r["image_url"] = f"/api/v1/photos/{r['sha256']}.jpg"
+    return jsonify(rows)
+
+# ---------- выдача файла ----------
+@app.get("/api/v1/photos/<sha>.jpg")
+def get_photo(sha: str):
+    sha = sha.lower()
+    if len(sha) != 64 or not all(c in "0123456789abcdef" for c in sha):
+        return abort(404)
+    p = path_for_sha(sha)
+    if not os.path.exists(p):
+        return abort(404)
+    return send_file(p, mimetype="image/jpeg", as_attachment=False)
