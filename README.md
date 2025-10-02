@@ -5,13 +5,20 @@
 
 > Мобильное приложение + веб-ГИС для съёмки деревьев, офлайн-детекции и последующей аналитики в геопространственной системе.
 
+
+<p align="center">
+  <img alt="Status" src="https://img.shields.io/badge/status-prototype-yellow">
+  <img alt="On-device inference" src="https://img.shields.io/badge/on-device-yes-brightgreen">
+  <img alt="NCNN YOLO" src="https://img.shields.io/badge/YOLOv11-NCNN-blue">
+</p>
 ---
 
 ## Состав репозитория
+```text
 gistrees/
-├─ gistrees-server/ # backend / БД / API веб-ГИС
-├─ gistrees-web/ # фронтенд веб-ГИС
-└─ README.md # этот файл
+├─ gistrees-server/   # backend / БД / API веб-ГИС
+├─ gistrees-web/      # фронтенд веб-ГИС
+└─ README.md          # этот файл
 
 
 ---
