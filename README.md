@@ -2,7 +2,7 @@
 
 [📱 **Скачать APK (Android)**](https://drive.google.com/file/d/19qOvT1BNHga8mdlgzpWnnBeEq9eRhn9L/view?usp=sharing)  
 [🌐 **Открыть веб-ГИС GISTrees**](https://gistrees.ru/)
-
+[**Git проект мобильного приложения**](https://github.com/avraam829/apkgistrees)
 > Мобильное приложение + веб-ГИС для съёмки деревьев, офлайн-детекции и последующей аналитики в геопространственной системе.
 <p align="center">
   <a href="https://drive.google.com/file/d/19qOvT1BNHga8mdlgzpWnnBeEq9eRhn9L/view?usp=sharing">
