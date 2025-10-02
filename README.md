@@ -192,6 +192,6 @@ gistrees/
 
 - 📱 APK: **https://drive.google.com/file/d/19qOvT1BNHga8mdlgzpWnnBeEq9eRhn9L/view?usp=sharing**  
 - 🌐 Веб-ГИС: **https://gistrees.ru/**  
-- 📑 Презентация: *(добавим ссылку позже в этом разделе)*
+- 📑 Презентация: **https://drive.google.com/drive/folders/1L-6Dk3UZbTNXORSR3GP8CXobNB30YU7M?usp=sharing**
 
 ---
